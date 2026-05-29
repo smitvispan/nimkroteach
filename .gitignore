@@ -1,0 +1,7 @@
+venv/
+*.pyc
+__pycache__/
+*.egg-info/
+.env
+tunnel_url.txt
+google_cx.txt
