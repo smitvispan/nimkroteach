@@ -1,9 +1,1 @@
-DB_HOST = '127.0.0.1'
-DB_PORT = 3307
-DB_USER = 'root'
-DB_PASSWORD = ''
-DB_NAME = 'business_directory'
-DB_SOCKET = '/tmp/mysqld/mysql.sock'
-OPENROUTER_KEY = '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'
-AI_MODEL = 'deepseek/deepseek-chat'
 GOOGLE_CX = '4649d11d2ff7f47d1'

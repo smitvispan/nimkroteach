@@ -1,4 +1,4 @@
-import os
+import os, sqlite3
 import re, io, csv, json, requests
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash, session, Response
 from flask_cors import CORS
@@ -6,8 +6,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import generate_password_hash, check_password_hash
 from ddgs import DDGS
 from bs4 import BeautifulSoup
-import pymysql
-from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_SOCKET, OPENROUTER_KEY, AI_MODEL, GOOGLE_CX
+from config import GOOGLE_CX
 
 GEMINI_KEYS = [
     "AIzaSyCpKeKB9tGawRSFNnUelJtIpj_QCY1W66I",
@@ -29,11 +28,14 @@ HEADERS = {
 }
 
 
+DB_PATH = '/home/deep/nimkroteach/data.db'
+
 def get_db():
-    return pymysql.connect(
-        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD,
-        database=DB_NAME, unix_socket=DB_SOCKET, cursorclass=pymysql.cursors.DictCursor,
-    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
 
 
 class User(UserMixin):
@@ -45,24 +47,36 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    db = get_db(); cursor = db.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-    user = cursor.fetchone(); cursor.close(); db.close()
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    db.close()
     if user: return User(user['id'], user['username'], user['email'])
     return None
 
 def init_db():
-    db = get_db(); cursor = db.cursor()
-    cursor.execute("""CREATE TABLE IF NOT EXISTS search_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        business_type VARCHAR(100) NOT NULL,
-        city VARCHAR(100) DEFAULT '',
-        result_count INT DEFAULT 0,
+    db = get_db()
+    db.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        email TEXT,
+        password_hash TEXT
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS search_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        business_type TEXT NOT NULL,
+        city TEXT DEFAULT '',
+        result_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )""")
-    db.commit(); cursor.close(); db.close()
+    cur = db.execute("SELECT COUNT(*) FROM users")
+    if cur.fetchone()[0] == 0:
+        h = generate_password_hash('admin123')
+        db.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+                    ('admin', 'admin@nimkro.com', h))
+    db.commit()
+    db.close()
 
 init_db()
 
@@ -255,9 +269,9 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        db = get_db(); cursor = db.cursor()
-        cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", (username, username))
-        user = cursor.fetchone(); cursor.close(); db.close()
+        db = get_db()
+        user = db.execute("SELECT * FROM users WHERE username = ? OR email = ?", (username, username)).fetchone()
+        db.close()
         if user and check_password_hash(user['password_hash'], password):
             login_user(User(user['id'], user['username'], user['email']))
             return redirect(url_for('dashboard'))
@@ -277,9 +291,9 @@ def register():
         elif password != confirm:
             flash('Passwords do not match', 'danger')
         else:
-            db = get_db(); cursor = db.cursor()
+            db = get_db()
             try:
-                cursor.execute("INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
+                db.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
                                (username, email, generate_password_hash(password)))
                 db.commit()
                 flash('Registration successful! Please login.', 'success')
@@ -287,7 +301,7 @@ def register():
             except:
                 flash('Username or email already exists', 'danger')
             finally:
-                cursor.close(); db.close()
+                db.close()
     return render_template('register.html')
 
 
@@ -303,9 +317,9 @@ def logout():
 @app.route('/history')
 @login_required
 def history():
-    db = get_db(); cursor = db.cursor()
-    cursor.execute("SELECT * FROM search_history WHERE user_id = %s ORDER BY created_at DESC LIMIT 50", (current_user.id,))
-    searches = cursor.fetchall(); cursor.close(); db.close()
+    db = get_db()
+    searches = db.execute("SELECT * FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", (current_user.id,)).fetchall()
+    db.close()
     return render_template('history.html', username=current_user.username, searches=searches)
 
 @app.route('/export-data')
@@ -319,9 +333,9 @@ def settings_page():
     cx_path = '/home/deep/nimkroteach/google_cx.txt'
     if request.method == 'POST':
         if 'clear_history' in request.form:
-            db = get_db(); cursor = db.cursor()
-            cursor.execute("DELETE FROM search_history WHERE user_id = %s", (current_user.id,))
-            db.commit(); cursor.close(); db.close()
+            db = get_db()
+            db.execute("DELETE FROM search_history WHERE user_id = ?", (current_user.id,))
+            db.commit(); db.close()
             flash('History cleared', 'success')
         elif 'save_cx' in request.form:
             cx = request.form.get('google_cx', '').strip()
@@ -333,9 +347,8 @@ def settings_page():
             current_pw = request.form.get('current_password', '')
             new_pw = request.form.get('new_password', '')
             confirm = request.form.get('confirm_password', '')
-            db = get_db(); cursor = db.cursor()
-            cursor.execute("SELECT password_hash FROM users WHERE id = %s", (current_user.id,))
-            user = cursor.fetchone()
+            db = get_db()
+            user = db.execute("SELECT password_hash FROM users WHERE id = ?", (current_user.id,)).fetchone()
             if not user or not check_password_hash(user['password_hash'], current_pw):
                 flash('Current password is incorrect', 'error')
             elif new_pw != confirm:
@@ -343,11 +356,11 @@ def settings_page():
             elif len(new_pw) < 4:
                 flash('Password must be at least 4 characters', 'error')
             else:
-                cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
                                (generate_password_hash(new_pw), current_user.id))
                 db.commit()
                 flash('Password updated successfully', 'success')
-            cursor.close(); db.close()
+            db.close()
         return redirect(url_for('settings_page'))
     google_cx = ''
     try:
@@ -528,10 +541,10 @@ def bulk_scrape():
 
     # Save to history
     try:
-        db = get_db(); cursor = db.cursor()
-        cursor.execute("INSERT INTO search_history (user_id, business_type, city, result_count) VALUES (%s, %s, %s, %s)",
+        db = get_db();         db = get_db()
+        db.execute("INSERT INTO search_history (user_id, business_type, city, result_count) VALUES (?, ?, ?, ?)",
                        (current_user.id, business_type, city, len(final)))
-        db.commit(); cursor.close(); db.close()
+        db.commit(); db.close()
     except: pass
 
     return jsonify(final[:120])
