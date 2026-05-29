@@ -1,6 +1,7 @@
 import subprocess, os, time, signal, sys
 
-logfile = '/home/deep/nimkroteach/tunnel_url.txt'
+BASE = os.path.dirname(os.path.abspath(__file__))
+logfile = os.path.join(BASE, 'tunnel_url.txt')
 
 with open(logfile, 'w') as f:
     proc = subprocess.Popen([

@@ -8,6 +8,7 @@ from ddgs import DDGS
 from bs4 import BeautifulSoup
 from config import GOOGLE_CX
 
+BASE = os.path.dirname(os.path.abspath(__file__))
 GEMINI_KEYS = [
     "AIzaSyCpKeKB9tGawRSFNnUelJtIpj_QCY1W66I",
     "AIzaSyDm48LnkfO5riK632JqMkOBiPB11drj7vU",
@@ -28,7 +29,7 @@ HEADERS = {
 }
 
 
-DB_PATH = '/home/deep/nimkroteach/data.db'
+DB_PATH = os.path.join(BASE, 'data.db')
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -118,7 +119,7 @@ def search_google(query, max_results=10):
     results = []
     cx = GOOGLE_CX
     try:
-        with open('/home/deep/nimkroteach/google_cx.txt') as f:
+        with open(os.path.join(BASE, 'google_cx.txt')) as f:
             cx_val = f.read().strip()
             if cx_val: cx = cx_val
     except: pass
@@ -330,7 +331,7 @@ def export_data():
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings_page():
-    cx_path = '/home/deep/nimkroteach/google_cx.txt'
+    cx_path = os.path.join(BASE, 'google_cx.txt')
     if request.method == 'POST':
         if 'clear_history' in request.form:
             db = get_db()
@@ -376,7 +377,7 @@ def settings_page():
 def dashboard():
     url = ''
     try:
-        with open('/home/deep/nimkroteach/tunnel_url.txt') as f:
+        with open(os.path.join(BASE, 'tunnel_url.txt')) as f:
             for line in f:
                 m = re.search(r'https://[a-z0-9]+\.lhr\.life', line)
                 if m: url = m.group(); break
