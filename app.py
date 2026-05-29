@@ -1,3 +1,4 @@
+import os
 import re, io, csv, json, requests
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash, session, Response
 from flask_cors import CORS
@@ -15,8 +16,6 @@ GEMINI_KEYS = [
     "AIzaSyAU_aOvROBtjFaRU92q6_XfCh0z-IUhVXQ",
 ]
 GEMINI_MODEL = "gemini-2.5-flash"
-_gemini_key_idx = 0
-
 app = Flask(__name__)
 app.secret_key = 'business-directory-secret-key-2026'
 CORS(app)
@@ -98,6 +97,7 @@ GOOGLE_KEYS = [
     "AIzaSyAU_aOvROBtjFaRU92q6_XfCh0z-IUhVXQ",
 ]
 _google_key_idx = 0
+_gemini_key_idx = 0
 
 def search_google(query, max_results=10):
     global _google_key_idx
