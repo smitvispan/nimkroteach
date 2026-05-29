@@ -5,3 +5,4 @@ __pycache__/
 .env
 tunnel_url.txt
 google_cx.txt
+data.db
