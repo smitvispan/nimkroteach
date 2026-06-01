@@ -3,6 +3,7 @@ import re, io, csv, json, requests
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash, session, Response
 from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from ddgs import DDGS
 from bs4 import BeautifulSoup
@@ -141,7 +142,7 @@ _google_key_idx = 0
 def search_google(query, max_results=10):
     global _google_key_idx
     results = []
-    cx = GOOGLE_CX
+    cx = os.environ.get('GOOGLE_CX', '') or GOOGLE_CX
     try:
         with open(os.path.join(BASE, 'google_cx.txt')) as f:
             cx_val = f.read().strip()
@@ -292,8 +293,15 @@ def logout():
 @login_required
 def history():
     db = get_db()
-    searches = db.execute("SELECT * FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", (current_user.id,)).fetchall()
+    rows = db.execute("SELECT * FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", (current_user.id,)).fetchall()
     db.close()
+    searches = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get('created_at'), str):
+            try: d['created_at'] = datetime.strptime(d['created_at'], '%Y-%m-%d %H:%M:%S')
+            except: pass
+        searches.append(d)
     return render_template('history.html', username=current_user.username, searches=searches)
 
 @app.route('/export-data')
