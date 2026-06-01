@@ -9,13 +9,6 @@ from bs4 import BeautifulSoup
 from config import GOOGLE_CX
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-GEMINI_KEYS = [
-    "AIzaSyCpKeKB9tGawRSFNnUelJtIpj_QCY1W66I",
-    "AIzaSyDm48LnkfO5riK632JqMkOBiPB11drj7vU",
-    "AIzaSyDTTewxm6JKuqt_p5BAN806iDliD5BIlNk",
-    "AIzaSyAU_aOvROBtjFaRU92q6_XfCh0z-IUhVXQ",
-]
-GEMINI_MODEL = "gemini-2.5-flash"
 app = Flask(__name__)
 app.secret_key = 'business-directory-secret-key-2026'
 CORS(app)
@@ -105,6 +98,38 @@ def search_web(query, max_results=30, page=1, backend='auto'):
     return results
 
 
+BING_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+}
+
+def search_bing(query, max_results=10):
+    results = []
+    try:
+        url = f"https://www.bing.com/search?q={requests.utils.quote(query)}&count={max_results}"
+        resp = requests.get(url, headers=BING_HEADERS, timeout=8)
+        if resp.status_code != 200:
+            return results
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        for li in soup.select('li.b_algo'):
+            h2 = li.select_one('h2 a')
+            if not h2:
+                continue
+            title = h2.get_text(strip=True)
+            href = h2.get('href', '')
+            body = ''
+            p = li.select_one('.b_caption p')
+            if p:
+                body = p.get_text(strip=True)[:300]
+            if not title or len(title) < 5 or not href:
+                continue
+            if any(d in href.lower() for d in EXCLUDE_DOMAINS):
+                continue
+            results.append({'name': title, 'website': href, 'snippet': body})
+    except Exception as e:
+        print(f"Bing search error: {e}")
+    return results
+
+
 GOOGLE_KEYS = [
     "AIzaSyCpKeKB9tGawRSFNnUelJtIpj_QCY1W66I",
     "AIzaSyDm48LnkfO5riK632JqMkOBiPB11drj7vU",
@@ -112,7 +137,6 @@ GOOGLE_KEYS = [
     "AIzaSyAU_aOvROBtjFaRU92q6_XfCh0z-IUhVXQ",
 ]
 _google_key_idx = 0
-_gemini_key_idx = 0
 
 def search_google(query, max_results=10):
     global _google_key_idx
@@ -213,58 +237,7 @@ def deep_scrape(url, business_name=''):
     return info
 
 
-def gemini_extract(texts, batch_size=8):
-    """Use Gemini AI to extract contact info from text snippets with key rotation."""
-    global _gemini_key_idx
-    results = [{'phones': [], 'emails': [], 'owner_name': '', 'linkedin': []} for _ in texts]
-    if not texts:
-        return results
-
-    for attempt in range(len(GEMINI_KEYS)):
-        key = GEMINI_KEYS[_gemini_key_idx % len(GEMINI_KEYS)]
-        _gemini_key_idx += 1
-
-        try:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i+batch_size]
-                prompt = """Extract Indian phone numbers, emails, owner/proprietor names, and LinkedIn URLs from these business listings.
-Return a JSON array of objects with: phones (string array - 10 digits without +91), emails (string array), owner (string or null), linkedin (string or null).
-
-Listings:\n"""
-                for j, t in enumerate(batch):
-                    prompt += f"{j}. {t[:200]}\n"
-
-                import requests as req
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
-                payload = {"contents": [{"parts": [{"text": prompt + "\nReturn ONLY valid JSON array. No markdown, no code fences."}]}]}
-                resp = req.post(url, json=payload, timeout=15)
-                if resp.status_code == 429:
-                    print(f"Gemini key {_gemini_key_idx % len(GEMINI_KEYS)} quota exceeded, trying next key")
-                    break
-                if resp.status_code != 200:
-                    continue
-
-                data = resp.json()
-                text = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                text = text.strip().removeprefix('```json').removeprefix('```').removesuffix('```')
-                import json as _json
-                extracted = _json.loads(text)
-                for j, item in enumerate(extracted):
-                    if i + j < len(results):
-                        results[i+j]['phones'] = [re.sub(r'[^0-9]','',p)[-10:] for p in item.get('phones',[]) if re.sub(r'[^0-9]','',p)[-10:]]
-                        results[i+j]['emails'] = item.get('emails', [])[:3]
-                        results[i+j]['owner_name'] = item.get('owner', '') or ''
-                        li = item.get('linkedin', '') or ''
-                        results[i+j]['linkedin'] = [li] if li and 'linkedin.com' in li else []
-            break
-        except Exception as e:
-            print(f"Gemini attempt {attempt} error: {e}")
-            continue
-    return results
-
-
 # ============ AUTH ROUTES ============
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -424,15 +397,22 @@ def bulk_scrape():
             f"{business_type} {city} phone contact",
             f"{business_type} {city} address",
             f"{business_type} {city} contact number",
+            f"{business_type} {city} phone number",
+            f"{business_type} {city} email address",
+            f"{business_type} {city} website",
             f'"{business_type}" "{city}"',
         ]
     queries += [
         f"site:indiamart.com {business_type}",
         f"site:tradeindia.com {business_type}",
+        f"site:justdial.com {business_type}",
+        f"site:sulekha.com {business_type}",
         f"{business_type} manufacturers india",
         f"{business_type} dealers india",
         f"{business_type} suppliers india",
         f"{business_type} wholesale india",
+        f"{business_type} india phone number",
+        f"{business_type} india email contact",
         f"{business_type} india phone email",
         f'"{business_type}" phone india contact',
     ]
@@ -461,6 +441,27 @@ def bulk_scrape():
     ]
     with cf.ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(search_google, q, 10): q for q in google_queries}
+        for f in cf.as_completed(futures):
+            try:
+                all_raw.extend(f.result())
+            except:
+                pass
+
+    # Phase 1c: Bing search queries (parallel - independent 2nd source)
+    bing_queries = []
+    if has_city:
+        bing_queries = [
+            f"{business_type} {city} dealers",
+            f"{business_type} {city} manufacturers",
+            f"{business_type} {city} contact number",
+        ]
+    bing_queries += [
+        f"{business_type} india manufacturers",
+        f"{business_type} india suppliers",
+        f"{business_type} wholesale india",
+    ]
+    with cf.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(search_bing, q, 10): q for q in bing_queries}
         for f in cf.as_completed(futures):
             try:
                 all_raw.extend(f.result())
@@ -548,7 +549,7 @@ def bulk_scrape():
         db.commit(); db.close()
     except: pass
 
-    return jsonify(final[:120])
+    return jsonify(final[:200])
 
 
 @app.route('/api/ai-scrape')
